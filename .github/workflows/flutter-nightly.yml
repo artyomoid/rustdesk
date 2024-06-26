@@ -7,10 +7,10 @@ on:
   workflow_dispatch:
 
 jobs:
-  runs-on: self-hosted
   run-flutter-nightly-build:
     uses: ./.github/workflows/flutter-build.yml
     secrets: inherit
     with:
       upload-artifact: true
       upload-tag: "nightly"
+      runs-on: self-hosted
