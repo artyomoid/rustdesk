@@ -7,9 +7,9 @@ on:
     # schedule build every night
     - cron: "0 0 * * *"
   workflow_dispatch:
+  
 jobs:
 
-  runs-on: self-hosted
   
   run-flutter-nightly-build: 
       uses: ./.github/workflows/flutter-build.yml
