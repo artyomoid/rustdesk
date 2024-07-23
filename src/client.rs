@@ -22,12 +22,9 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 pub use file_trait::FileManager;
-#[cfg(windows)]
-use hbb_common::tokio;
 #[cfg(not(feature = "flutter"))]
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use hbb_common::tokio::sync::mpsc::UnboundedSender;
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use hbb_common::tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 use hbb_common::{
     allow_err,
@@ -42,11 +39,14 @@ use hbb_common::{
     protobuf::{Message as _, MessageField},
     rand,
     rendezvous_proto::*,
-    socket_client,
+    socket_client::{connect_tcp, connect_tcp_local, ipv4_to_ipv6},
     sodiumoxide::{base64, crypto::sign},
     tcp::FramedStream,
     timeout,
-    tokio::time::Duration,
+    tokio::{
+        self,
+        time::{interval, Duration, Instant},
+    },
     AddrMangle, ResultType, Stream,
 };
 pub use helper::*;
@@ -60,15 +60,15 @@ use crate::{
     check_port,
     common::input::{MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT, MOUSE_TYPE_DOWN, MOUSE_TYPE_UP},
     create_symmetric_key_msg, decode_id_pk, get_rs_pk, is_keyboard_mode_supported, secure_tcp,
-    ui_interface::use_texture_render,
+    ui_interface::{get_buildin_option, use_texture_render},
     ui_session_interface::{InvokeUiSession, Session},
 };
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+use crate::clipboard::{check_clipboard, CLIPBOARD_INTERVAL};
 #[cfg(not(feature = "flutter"))]
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use crate::ui_session_interface::SessionPermissionConfig;
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-use crate::{check_clipboard, CLIPBOARD_INTERVAL};
 
 pub use super::lang::*;
 
@@ -136,7 +136,7 @@ lazy_static::lazy_static! {
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 lazy_static::lazy_static! {
     static ref ENIGO: Arc<Mutex<enigo::Enigo>> = Arc::new(Mutex::new(enigo::Enigo::new()));
-    static ref OLD_CLIPBOARD_TEXT: Arc<Mutex<String>> = Default::default();
+    static ref OLD_CLIPBOARD_DATA: Arc<Mutex<crate::clipboard::ClipboardData>> = Default::default();
     static ref TEXT_CLIPBOARD_STATE: Arc<Mutex<TextClipboardState>> = Arc::new(Mutex::new(TextClipboardState::new()));
 }
 
@@ -144,8 +144,8 @@ const PUBLIC_SERVER: &str = "public";
 
 #[inline]
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-pub fn get_old_clipboard_text() -> &'static Arc<Mutex<String>> {
-    &OLD_CLIPBOARD_TEXT
+pub fn get_old_clipboard_text() -> Arc<Mutex<crate::clipboard::ClipboardData>> {
+    OLD_CLIPBOARD_DATA.clone()
 }
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -226,7 +226,7 @@ impl Client {
         token: &str,
         conn_type: ConnType,
         interface: impl Interface,
-    ) -> ResultType<(Stream, bool, Option<Vec<u8>>)> {
+    ) -> ResultType<((Stream, bool, Option<Vec<u8>>), (i32, String))> {
         debug_assert!(peer == interface.get_id());
         interface.update_direct(None);
         interface.update_received(false);
@@ -250,25 +250,26 @@ impl Client {
         token: &str,
         conn_type: ConnType,
         interface: impl Interface,
-    ) -> ResultType<(Stream, bool, Option<Vec<u8>>)> {
+    ) -> ResultType<((Stream, bool, Option<Vec<u8>>), (i32, String))> {
         if config::is_incoming_only() {
             bail!("Incoming only mode");
         }
         // to-do: remember the port for each peer, so that we can retry easier
         if hbb_common::is_ip_str(peer) {
             return Ok((
-                socket_client::connect_tcp(check_port(peer, RELAY_PORT + 1), CONNECT_TIMEOUT)
-                    .await?,
-                true,
-                None,
+                (
+                    connect_tcp(check_port(peer, RELAY_PORT + 1), CONNECT_TIMEOUT).await?,
+                    true,
+                    None,
+                ),
+                (0, "".to_owned()),
             ));
         }
         // Allow connect to {domain}:{port}
         if hbb_common::is_domain_port_str(peer) {
             return Ok((
-                socket_client::connect_tcp(peer, CONNECT_TIMEOUT).await?,
-                true,
-                None,
+                (connect_tcp(peer, CONNECT_TIMEOUT).await?, true, None),
+                (0, "".to_owned()),
             ));
         }
 
@@ -295,13 +296,13 @@ impl Client {
             }
         };
 
-        let mut socket = socket_client::connect_tcp(&*rendezvous_server, CONNECT_TIMEOUT).await;
+        let mut socket = connect_tcp(&*rendezvous_server, CONNECT_TIMEOUT).await;
         debug_assert!(!servers.contains(&rendezvous_server));
         if socket.is_err() && !servers.is_empty() {
             log::info!("try the other servers: {:?}", servers);
             for server in servers {
                 let server = check_port(server, RENDEZVOUS_PORT);
-                socket = socket_client::connect_tcp(&*server, CONNECT_TIMEOUT).await;
+                socket = connect_tcp(&*server, CONNECT_TIMEOUT).await;
                 if socket.is_ok() {
                     rendezvous_server = server;
                     break;
@@ -327,6 +328,7 @@ impl Client {
         let mut peer_nat_type = NatType::UNKNOWN_NAT;
         let my_nat_type = crate::get_nat_type(100).await;
         let mut is_local = false;
+        let mut feedback = 0;
         for i in 1..=3 {
             log::info!("#{} punch attempt with {}, id: {}", i, my_addr, peer);
             let mut msg_out = RendezvousMessage::new();
@@ -342,9 +344,11 @@ impl Client {
                 nat_type: nat_type.into(),
                 licence_key: key.to_owned(),
                 conn_type: conn_type.into(),
+                version: crate::VERSION.to_owned(),
                 ..Default::default()
             });
             socket.send(&msg_out).await?;
+            // below timeout should not bigger than hbbs's connection timeout.
             if let Some(msg_in) =
                 crate::get_next_nonkeyexchange_msg(&mut socket, Some(i * 6000)).await
             {
@@ -375,6 +379,7 @@ impl Client {
                             signed_id_pk = ph.pk.into();
                             relay_server = ph.relay_server;
                             peer_addr = AddrMangle::decode(&ph.socket_addr);
+                            feedback = ph.feedback;
                             log::info!("Hole Punched {} = {}", peer, peer_addr);
                             break;
                         }
@@ -395,9 +400,10 @@ impl Client {
                             my_addr.is_ipv4(),
                         )
                         .await?;
+                        feedback = rr.feedback;
                         let pk =
                             Self::secure_connection(peer, signed_id_pk, key, &mut conn).await?;
-                        return Ok((conn, false, pk));
+                        return Ok(((conn, false, pk), (feedback, rendezvous_server)));
                     }
                     _ => {
                         log::error!("Unexpected protobuf msg received: {:?}", msg_in);
@@ -420,23 +426,26 @@ impl Client {
                 format!("nat_type: {:?}", peer_nat_type)
             }
         );
-        Self::connect(
-            my_addr,
-            peer_addr,
-            peer,
-            signed_id_pk,
-            &relay_server,
-            &rendezvous_server,
-            time_used,
-            peer_nat_type,
-            my_nat_type,
-            is_local,
-            key,
-            token,
-            conn_type,
-            interface,
-        )
-        .await
+        Ok((
+            Self::connect(
+                my_addr,
+                peer_addr,
+                peer,
+                signed_id_pk,
+                &relay_server,
+                &rendezvous_server,
+                time_used,
+                peer_nat_type,
+                my_nat_type,
+                is_local,
+                key,
+                token,
+                conn_type,
+                interface,
+            )
+            .await?,
+            (feedback, rendezvous_server),
+        ))
     }
 
     /// Connect to the peer.
@@ -491,8 +500,7 @@ impl Client {
         log::info!("peer address: {}, timeout: {}", peer, connect_timeout);
         let start = std::time::Instant::now();
         // NOTICE: Socks5 is be used event in intranet. Which may be not a good way.
-        let mut conn =
-            socket_client::connect_tcp_local(peer, Some(local_addr), connect_timeout).await;
+        let mut conn = connect_tcp_local(peer, Some(local_addr), connect_timeout).await;
         let mut direct = !conn.is_err();
         interface.update_direct(Some(direct));
         if interface.is_force_relay() || conn.is_err() {
@@ -535,7 +543,7 @@ impl Client {
         conn: &mut Stream,
     ) -> ResultType<Option<Vec<u8>>> {
         let rs_pk = get_rs_pk(if key.is_empty() {
-            hbb_common::config::RS_PUB_KEY
+            config::RS_PUB_KEY
         } else {
             key
         });
@@ -622,7 +630,7 @@ impl Client {
 
         for i in 1..=3 {
             // use different socket due to current hbbs implementation requiring different nat address for each attempt
-            let mut socket = socket_client::connect_tcp(rendezvous_server, CONNECT_TIMEOUT)
+            let mut socket = connect_tcp(rendezvous_server, CONNECT_TIMEOUT)
                 .await
                 .with_context(|| "Failed to connect to rendezvous server")?;
 
@@ -679,8 +687,8 @@ impl Client {
         conn_type: ConnType,
         ipv4: bool,
     ) -> ResultType<Stream> {
-        let mut conn = socket_client::connect_tcp(
-            socket_client::ipv4_to_ipv6(check_port(relay_server, RELAY_PORT), ipv4),
+        let mut conn = connect_tcp(
+            ipv4_to_ipv6(check_port(relay_server, RELAY_PORT), ipv4),
             CONNECT_TIMEOUT,
         )
         .await
@@ -736,10 +744,11 @@ impl Client {
                     break;
                 }
                 if !TEXT_CLIPBOARD_STATE.lock().unwrap().is_required {
+                    std::thread::sleep(Duration::from_millis(CLIPBOARD_INTERVAL));
                     continue;
                 }
 
-                if let Some(msg) = check_clipboard(&mut ctx, Some(&OLD_CLIPBOARD_TEXT)) {
+                if let Some(msg) = check_clipboard(&mut ctx, Some(OLD_CLIPBOARD_DATA.clone())) {
                     #[cfg(feature = "flutter")]
                     crate::flutter::send_text_clipboard_msg(msg);
                     #[cfg(not(feature = "flutter"))]
@@ -765,12 +774,12 @@ impl Client {
 
     #[inline]
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    fn get_current_text_clipboard_msg() -> Option<Message> {
-        let txt = &*OLD_CLIPBOARD_TEXT.lock().unwrap();
-        if txt.is_empty() {
+    fn get_current_clipboard_msg() -> Option<Message> {
+        let data = &*OLD_CLIPBOARD_DATA.lock().unwrap();
+        if data.is_empty() {
             None
         } else {
-            Some(crate::create_clipboard_msg(txt.clone()))
+            Some(data.create_msg())
         }
     }
 }
@@ -2018,11 +2027,15 @@ impl LoginConfigHandler {
         } else {
             (my_id, self.id.clone())
         };
+        let mut display_name = get_buildin_option(config::keys::OPTION_DISPLAY_NAME);
+        if display_name.is_empty() {
+            display_name = crate::username();
+        }
         let mut lr = LoginRequest {
             username: pure_id,
             password: password.into(),
             my_id,
-            my_name: crate::username(),
+            my_name: display_name,
             option: self.get_option_message(true).into(),
             session_id: self.session_id,
             version: crate::VERSION.to_string(),
@@ -2612,7 +2625,7 @@ struct LoginErrorMsgBox {
 
 lazy_static::lazy_static! {
     static ref LOGIN_ERROR_MAP: Arc<HashMap<&'static str, LoginErrorMsgBox>> = {
-        use hbb_common::config::LINK_HEADLESS_LINUX_SUPPORT;
+        use config::LINK_HEADLESS_LINUX_SUPPORT;
         let map = HashMap::from([(LOGIN_SCREEN_WAYLAND, LoginErrorMsgBox{
             msgtype: "error",
             title: "Login Error",
@@ -2778,6 +2791,20 @@ pub async fn handle_hash(
     if password.is_empty() {
         try_get_password_from_personal_ab(lc.clone(), &mut password);
     }
+
+    if password.is_empty() {
+        let p =
+            crate::ui_interface::get_buildin_option(config::keys::OPTION_DEFAULT_CONNECT_PASSWORD);
+        if !p.is_empty() {
+            let mut hasher = Sha256::new();
+            hasher.update(p.clone());
+            hasher.update(&hash.salt);
+            let res = hasher.finalize();
+            password = res[..].into();
+            lc.write().unwrap().password_source = PasswordSource::SharedAb(p); // reuse SharedAb here
+        }
+    }
+
     lc.write().unwrap().password = password.clone();
     let password = if password.is_empty() {
         // login without password, the remote side can click accept
@@ -2800,7 +2827,7 @@ pub async fn handle_hash(
 #[inline]
 fn try_get_password_from_personal_ab(lc: Arc<RwLock<LoginConfigHandler>>, password: &mut Vec<u8>) {
     let access_token = LocalConfig::get_option("access_token");
-    let ab = hbb_common::config::Ab::load();
+    let ab = config::Ab::load();
     if !access_token.is_empty() && access_token == ab.access_token {
         let id = lc.read().unwrap().id.clone();
         if let Some(ab) = ab.ab_entries.iter().find(|a| a.personal()) {
@@ -3165,4 +3192,76 @@ pub fn check_if_retry(msgtype: &str, title: &str, text: &str, retry_for_relay: b
                 && !text.to_lowercase().contains("mismatch")
                 && !text.to_lowercase().contains("manually")
                 && !text.to_lowercase().contains("not allowed")))
+}
+
+pub async fn hc_connection(
+    feedback: i32,
+    rendezvous_server: String,
+    token: &str,
+) -> Option<tokio::sync::mpsc::UnboundedSender<()>> {
+    if feedback == 0 || rendezvous_server.is_empty() || token.is_empty() {
+        return None;
+    }
+    let (tx, rx) = unbounded_channel::<()>();
+    let token = token.to_owned();
+    tokio::spawn(async move {
+        allow_err!(hc_connection_(rendezvous_server, rx, token).await);
+    });
+    Some(tx)
+}
+
+async fn hc_connection_(
+    rendezvous_server: String,
+    mut rx: UnboundedReceiver<()>,
+    token: String,
+) -> ResultType<()> {
+    let mut timer = crate::rustdesk_interval(interval(crate::TIMER_OUT));
+    let mut last_recv_msg = Instant::now();
+    let mut keep_alive = crate::DEFAULT_KEEP_ALIVE;
+
+    let host = check_port(&rendezvous_server, RENDEZVOUS_PORT);
+    let mut conn = connect_tcp(host.clone(), CONNECT_TIMEOUT).await?;
+    let key = crate::get_key(true).await;
+    crate::secure_tcp(&mut conn, &key).await?;
+    let mut msg_out = RendezvousMessage::new();
+    msg_out.set_hc(HealthCheck {
+        token,
+        ..Default::default()
+    });
+    conn.send(&msg_out).await?;
+    loop {
+        tokio::select! {
+            res = rx.recv() => {
+                if res.is_none() {
+                    log::debug!("HC connection is closed as controlling connection exits");
+                    break;
+                }
+            }
+            res = conn.next() => {
+                last_recv_msg = Instant::now();
+                let bytes = res.ok_or_else(|| anyhow!("Rendezvous connection is reset by the peer"))??;
+                if bytes.is_empty() {
+                    conn.send_bytes(bytes::Bytes::new()).await?;
+                    continue; // heartbeat
+                }
+                let msg = RendezvousMessage::parse_from_bytes(&bytes)?;
+                match msg.union {
+                    Some(rendezvous_message::Union::RegisterPkResponse(rpr)) => {
+                        if rpr.keep_alive > 0 {
+                            keep_alive = rpr.keep_alive * 1000;
+                            log::info!("keep_alive: {}ms", keep_alive);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            _  = timer.tick() => {
+                // https://www.emqx.com/en/blog/mqtt-keep-alive
+                if last_recv_msg.elapsed().as_millis() as u64 > keep_alive as u64 * 3 / 2 {
+                    bail!("HC connection is timeout");
+                }
+            }
+        }
+    }
+    Ok(())
 }

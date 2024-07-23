@@ -69,6 +69,7 @@ lazy_static::lazy_static! {
     pub static ref DEFAULT_LOCAL_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
     pub static ref OVERWRITE_LOCAL_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
     pub static ref HARD_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
+    pub static ref BUILDIN_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
 }
 
 lazy_static::lazy_static! {
@@ -487,7 +488,19 @@ pub fn load_path<T: serde::Serialize + serde::de::DeserializeOwned + Default + s
 
 #[inline]
 pub fn store_path<T: serde::Serialize>(path: PathBuf, cfg: T) -> crate::ResultType<()> {
-    Ok(confy::store_path(path, cfg)?)
+    #[cfg(not(windows))]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        Ok(confy::store_path_perms(
+            path,
+            cfg,
+            fs::Permissions::from_mode(0o600),
+        )?)
+    }
+    #[cfg(windows)]
+    {
+        Ok(confy::store_path(path, cfg)?)
+    }
 }
 
 impl Config {
@@ -2088,6 +2101,20 @@ pub mod keys {
     pub const OPTION_ENABLE_ANDROID_SOFTWARE_ENCODING_HALF_SCALE: &str =
         "enable-android-software-encoding-half-scale";
 
+    // buildin options
+    pub const OPTION_DISPLAY_NAME: &str = "display-name";
+    pub const OPTION_DISABLE_UDP: &str = "disable-udp";
+    pub const OPTION_PRESET_USERNAME: &str = "preset-user-name";
+    pub const OPTION_PRESET_STRATEGY_NAME: &str = "preset-strategy-name";
+    pub const OPTION_REMOVE_PRESET_PASSWORD_WARNING: &str = "remove-preset-password-warning";
+    pub const OPTION_HIDE_SECURITY_SETTINGS: &str = "hide-security-settings";
+    pub const OPTION_HIDE_NETWORK_SETTINGS: &str = "hide-network-settings";
+    pub const OPTION_HIDE_SERVER_SETTINGS: &str = "hide-server-settings";
+    pub const OPTION_HIDE_PROXY_SETTINGS: &str = "hide-proxy-settings";
+    pub const OPTION_HIDE_USERNAME_ON_CARD: &str = "hide-username-on-card";
+    pub const OPTION_HIDE_HELP_CARDS: &str = "hide-help-cards";
+    pub const OPTION_DEFAULT_CONNECT_PASSWORD: &str = "default-connect-password";
+
     // flutter local options
     pub const OPTION_FLUTTER_REMOTE_MENUBAR_STATE: &str = "remoteMenubarState";
     pub const OPTION_FLUTTER_PEER_SORTING: &str = "peer-sorting";
@@ -2096,6 +2123,7 @@ pub mod keys {
     pub const OPTION_FLUTTER_PEER_TAB_VISIBLE: &str = "peer-tab-visible";
     pub const OPTION_FLUTTER_PEER_CARD_UI_TYLE: &str = "peer-card-ui-type";
     pub const OPTION_FLUTTER_CURRENT_AB_NAME: &str = "current-ab-name";
+    pub const OPTION_ALLOW_REMOTE_CM_MODIFICATION: &str = "allow-remote-cm-modification";
 
     // android floating window options
     pub const OPTION_DISABLE_FLOATING_WINDOW: &str = "disable-floating-window";
@@ -2173,6 +2201,7 @@ pub mod keys {
         OPTION_KEEP_SCREEN_ON,
         OPTION_DISABLE_GROUP_PANEL,
         OPTION_PRE_ELEVATE_SERVICE,
+        OPTION_ALLOW_REMOTE_CM_MODIFICATION,
     ];
     // DEFAULT_SETTINGS, OVERWRITE_SETTINGS
     pub const KEYS_SETTINGS: &[&str] = &[
@@ -2211,6 +2240,22 @@ pub mod keys {
         OPTION_PRESET_ADDRESS_BOOK_TAG,
         OPTION_ENABLE_DIRECTX_CAPTURE,
         OPTION_ENABLE_ANDROID_SOFTWARE_ENCODING_HALF_SCALE,
+    ];
+
+    // BUILDIN_SETTINGS
+    pub const KEYS_BUILDIN_SETTINGS: &[&str] = &[
+        OPTION_DISPLAY_NAME,
+        OPTION_DISABLE_UDP,
+        OPTION_PRESET_USERNAME,
+        OPTION_PRESET_STRATEGY_NAME,
+        OPTION_REMOVE_PRESET_PASSWORD_WARNING,
+        OPTION_HIDE_SECURITY_SETTINGS,
+        OPTION_HIDE_NETWORK_SETTINGS,
+        OPTION_HIDE_SERVER_SETTINGS,
+        OPTION_HIDE_PROXY_SETTINGS,
+        OPTION_HIDE_USERNAME_ON_CARD,
+        OPTION_HIDE_HELP_CARDS,
+        OPTION_DEFAULT_CONNECT_PASSWORD,
     ];
 }
 
@@ -2469,6 +2514,28 @@ mod tests {
                 HashMap::from([("0".to_string(), Resolution { w: 1920, h: 1080 })]);
             let cfg = toml::from_str::<PeerConfig>(wrong_field_str);
             assert_eq!(cfg, Ok(cfg_to_compare), "Failed to test wrong_field_str");
+        }
+    }
+
+    #[test]
+    fn test_store_load() {
+        let peerconfig_id = "123456789";
+        let cfg: PeerConfig = Default::default();
+        cfg.store(&peerconfig_id);
+        assert_eq!(PeerConfig::load(&peerconfig_id), cfg);
+
+        #[cfg(not(windows))]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                // ignore file type information by masking with 0o777 (see https://stackoverflow.com/a/50045872)
+                fs::metadata(PeerConfig::path(&peerconfig_id))
+                    .expect("reading metadata failed")
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
         }
     }
 }

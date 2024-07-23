@@ -135,6 +135,17 @@ const String kOptionAllowLinuxHeadless = "allow-linux-headless";
 const String kOptionAllowRemoveWallpaper = "allow-remove-wallpaper";
 const String kOptionStopService = "stop-service";
 const String kOptionDirectxCapture = "enable-directx-capture";
+const String kOptionAllowRemoteCmModification = "allow-remote-cm-modification";
+
+// buildin opitons
+const String kOptionHideServerSetting = "hide-server-settings";
+const String kOptionHideProxySetting = "hide-proxy-settings";
+const String kOptionHideSecuritySetting = "hide-security-settings";
+const String kOptionHideNetworkSetting = "hide-network-settings";
+const String kOptionRemovePresetPasswordWarning =
+    "remove-preset-password-warning";
+const kHideUsernameOnCard = "hide-username-on-card";
+const String kOptionHideHelpCards = "hide-help-cards";
 
 const String kOptionToggleViewOnly = "view-only";
 
@@ -154,6 +165,8 @@ const int kWindowMainId = 0;
 
 const String kPointerEventKindTouch = "touch";
 const String kPointerEventKindMouse = "mouse";
+
+const String kKeyFlutterKey = "flutter_key";
 
 const String kKeyShowDisplaysAsIndividualWindows =
     'displays_as_individual_windows';

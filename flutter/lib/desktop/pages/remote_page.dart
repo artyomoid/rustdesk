@@ -107,7 +107,7 @@ class _RemotePageState extends State<RemotePage>
     super.initState();
     _initStates(widget.id);
     _ffi = FFI(widget.sessionId);
-    Get.put(_ffi, tag: widget.id);
+    Get.put<FFI>(_ffi, tag: widget.id);
     _ffi.imageModel.addCallbackOnFirstImage((String peerId) {
       showKBLayoutTypeChooserIfNeeded(
           _ffi.ffiModel.pi.platform, _ffi.dialogManager);
@@ -506,12 +506,13 @@ class _RemotePageState extends State<RemotePage>
     ];
 
     if (!_ffi.canvasModel.cursorEmbedded) {
-      paints.add(Obx(() => Offstage(
-          offstage: _showRemoteCursor.isFalse || _remoteCursorMoved.isFalse,
-          child: CursorPaint(
-            id: widget.id,
-            zoomCursor: _zoomCursor,
-          ))));
+      paints
+          .add(Obx(() => _showRemoteCursor.isFalse || _remoteCursorMoved.isFalse
+              ? Offstage()
+              : CursorPaint(
+                  id: widget.id,
+                  zoomCursor: _zoomCursor,
+                )));
     }
     paints.add(
       Positioned(

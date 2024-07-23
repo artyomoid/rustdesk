@@ -192,10 +192,10 @@ class FfiModel with ChangeNotifier {
       _permissions[k] = v == 'true';
     });
     // Only inited at remote page
-    if (desktopType == DesktopType.remote) {
+    if (parent.target?.connType == ConnType.defaultConn) {
       KeyboardEnabledState.find(id).value = _permissions['keyboard'] != false;
     }
-    debugPrint('$_permissions');
+    debugPrint('updatePermission: $_permissions');
     notifyListeners();
   }
 
@@ -438,20 +438,6 @@ class FfiModel with ChangeNotifier {
   _handlePortableServiceRunning(String peerId, Map<String, dynamic> evt) {
     final running = evt['running'] == 'true';
     parent.target?.elevationModel.onPortableServiceRunning(running);
-    if (running) {
-      if (pi.primaryDisplay != kInvalidDisplayIndex) {
-        if (pi.currentDisplay != pi.primaryDisplay) {
-          // Notify to switch display
-          msgBox(sessionId, 'custom-nook-nocancel-hasclose-info', 'Prompt',
-              'elevated_switch_display_msg', '', parent.target!.dialogManager);
-          bind.sessionSwitchDisplay(
-            isDesktop: isDesktop,
-            sessionId: sessionId,
-            value: Int32List.fromList([pi.primaryDisplay]),
-          );
-        }
-      }
-    }
   }
 
   handleAliasChanged(Map<String, dynamic> evt) {
@@ -1740,7 +1726,7 @@ class PredefinedCursor {
     _image2 = img2.decodePng(base64Decode(png));
     if (_image2 != null) {
       // The png type of forbidden cursor image is `PngColorType.indexed`.
-      if (isWindows && id == kPreForbiddenCursorId) {
+      if (id == kPreForbiddenCursorId) {
         _image2 = _image2!.convert(format: img2.Format.uint8, numChannels: 4);
       }
 

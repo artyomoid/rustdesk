@@ -68,6 +68,7 @@ use winreg::RegKey;
 
 pub const FLUTTER_RUNNER_WIN32_WINDOW_CLASS: &'static str = "FLUTTER_RUNNER_WIN32_WINDOW"; // main window, install window
 pub const EXPLORER_EXE: &'static str = "explorer.exe";
+pub const SET_FOREGROUND_WINDOW: &'static str = "SET_FOREGROUND_WINDOW";
 
 pub fn get_focused_display(displays: Vec<DisplayInfo>) -> Option<usize> {
     unsafe {
@@ -461,8 +462,18 @@ const SERVICE_TYPE: ServiceType = ServiceType::OWN_PROCESS;
 
 extern "C" {
     fn get_current_session(rdp: BOOL) -> DWORD;
-    fn LaunchProcessWin(cmd: *const u16, session_id: DWORD, as_user: BOOL, token_pid: &mut DWORD) -> HANDLE;
-    fn GetSessionUserTokenWin(lphUserToken: LPHANDLE, dwSessionId: DWORD, as_user: BOOL, token_pid: &mut DWORD) -> BOOL;
+    fn LaunchProcessWin(
+        cmd: *const u16,
+        session_id: DWORD,
+        as_user: BOOL,
+        token_pid: &mut DWORD,
+    ) -> HANDLE;
+    fn GetSessionUserTokenWin(
+        lphUserToken: LPHANDLE,
+        dwSessionId: DWORD,
+        as_user: BOOL,
+        token_pid: &mut DWORD,
+    ) -> BOOL;
     fn selectInputDesktop() -> BOOL;
     fn inputDesktopSelected() -> BOOL;
     fn is_windows_server() -> BOOL;
@@ -2017,7 +2028,7 @@ pub fn get_unicode_from_vk(vk: u32) -> Option<u16> {
         let current_window_thread_id = GetWindowThreadProcessId(GetForegroundWindow(), null_mut());
         let layout = GetKeyboardLayout(current_window_thread_id);
 
-        // refs: https://github.com/fufesou/rdev/blob/25a99ce71ab42843ad253dd51e6a35e83e87a8a4/src/windows/keyboard.rs#L115
+        // refs: https://github.com/rustdesk-org/rdev/blob/25a99ce71ab42843ad253dd51e6a35e83e87a8a4/src/windows/keyboard.rs#L115
         let press_state = 129;
         let mut state: [BYTE; 256] = [0; 256];
         let shift_left = rdev::get_modifier(rdev::Key::ShiftLeft);
@@ -2514,6 +2525,18 @@ fn nt_terminate_process(process_id: DWORD) -> ResultType<()> {
             }
         } else {
             bail!("Failed to load ntdll.dll");
+        }
+    }
+}
+
+pub fn try_set_window_foreground(window: HWND) {
+    let env_key = SET_FOREGROUND_WINDOW;
+    if let Ok(value) = std::env::var(env_key) {
+        if value == "1" {
+            unsafe {
+                SetForegroundWindow(window);
+            }
+            std::env::remove_var(env_key);
         }
     }
 }

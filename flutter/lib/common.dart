@@ -928,13 +928,9 @@ makeMobileActionsOverlayEntry(VoidCallback? onHide, {FFI? ffi}) {
       position: draggablePositions.mobileActions,
       width: overlayW,
       height: overlayH,
-      onBackPressed: () => session.inputModel.tap(MouseButtons.right),
-      onHomePressed: () => session.inputModel.tap(MouseButtons.wheel),
-      onRecentPressed: () async {
-        session.inputModel.sendMouse('down', MouseButtons.wheel);
-        await Future.delayed(const Duration(milliseconds: 500));
-        session.inputModel.sendMouse('up', MouseButtons.wheel);
-      },
+      onBackPressed: session.inputModel.onMobileBack,
+      onHomePressed: session.inputModel.onMobileHome,
+      onRecentPressed: session.inputModel.onMobileApps,
       onHidePressed: onHide,
     );
   }
@@ -1066,7 +1062,7 @@ void msgBox(SessionID sessionId, String type, String title, String text,
   bool hasOk = false;
   submit() {
     dialogManager.dismissAll();
-    // https://github.com/fufesou/rustdesk/blob/5e9a31340b899822090a3731769ae79c6bf5f3e5/src/ui/common.tis#L263
+    // https://github.com/rustdesk/rustdesk/blob/5e9a31340b899822090a3731769ae79c6bf5f3e5/src/ui/common.tis#L263
     if (!type.contains("custom") && desktopType != DesktopType.portForward) {
       closeConnection();
     }
@@ -1100,21 +1096,33 @@ void msgBox(SessionID sessionId, String type, String title, String text,
           dialogManager.dismissAll();
         }));
   }
-  if (reconnect != null &&
-      title == "Connection Error" &&
-      reconnectTimeout != null) {
+  if (reconnect != null && title == "Connection Error") {
     // `enabled` is used to disable the dialog button once the button is clicked.
     final enabled = true.obs;
-    final button = Obx(() => _ReconnectCountDownButton(
-          second: reconnectTimeout,
-          onPressed: enabled.isTrue
-              ? () {
-                  // Disable the button
-                  enabled.value = false;
-                  reconnect(dialogManager, sessionId, false);
-                }
-              : null,
-        ));
+    final button = reconnectTimeout != null
+        ? Obx(() => _ReconnectCountDownButton(
+              second: reconnectTimeout,
+              onPressed: enabled.isTrue
+                  ? () {
+                      // Disable the button
+                      enabled.value = false;
+                      reconnect(dialogManager, sessionId, false);
+                    }
+                  : null,
+            ))
+        : Obx(
+            () => dialogButton(
+              'Reconnect',
+              isOutline: true,
+              onPressed: enabled.isTrue
+                  ? () {
+                      // Disable the button
+                      enabled.value = false;
+                      reconnect(dialogManager, sessionId, false);
+                    }
+                  : null,
+            ),
+          );
     buttons.insert(0, button);
   }
   if (link.isNotEmpty) {
@@ -1432,7 +1440,7 @@ Future<void> initGlobalFFI() async {
   _globalFFI = FFI(null);
   debugPrint("_globalFFI init end");
   // after `put`, can also be globally found by Get.find<FFI>();
-  Get.put(_globalFFI, permanent: true);
+  Get.put<FFI>(_globalFFI, permanent: true);
 }
 
 String translate(String name) {
@@ -2719,20 +2727,26 @@ Future<void> shouldBeBlocked(RxBool block, WhetherUseRemoteBlock? use) async {
 }
 
 typedef WhetherUseRemoteBlock = Future<bool> Function();
-Widget buildRemoteBlock({required Widget child, WhetherUseRemoteBlock? use}) {
-  var block = false.obs;
+Widget buildRemoteBlock(
+    {required Widget child,
+    required RxBool block,
+    required bool mask,
+    WhetherUseRemoteBlock? use}) {
   return Obx(() => MouseRegion(
         onEnter: (_) async {
           await shouldBeBlocked(block, use);
         },
         onExit: (event) => block.value = false,
         child: Stack(children: [
-          child,
-          Offstage(
-              offstage: !block.value,
-              child: Container(
-                color: Colors.black.withOpacity(0.5),
-              )),
+          // scope block tab
+          FocusScope(child: child, canRequestFocus: !block.value),
+          // mask block click, cm not block click and still use check_click_time to avoid block local click
+          if (mask)
+            Offstage(
+                offstage: !block.value,
+                child: Container(
+                  color: Colors.black.withOpacity(0.5),
+                )),
         ]),
       ));
 }
@@ -3084,9 +3098,16 @@ Future<bool> setServerConfig(
   List<RxString>? errMsgs,
   ServerConfig config,
 ) async {
-  config.idServer = config.idServer.trim();
-  config.relayServer = config.relayServer.trim();
-  config.apiServer = config.apiServer.trim();
+  String removeEndSlash(String input) {
+    if (input.endsWith('/')) {
+      return input.substring(0, input.length - 1);
+    }
+    return input;
+  }
+
+  config.idServer = removeEndSlash(config.idServer.trim());
+  config.relayServer = removeEndSlash(config.relayServer.trim());
+  config.apiServer = removeEndSlash(config.apiServer.trim());
   config.key = config.key.trim();
   if (controllers != null) {
     controllers[0].text = config.idServer;
@@ -3305,6 +3326,11 @@ Widget buildPresetPasswordWarning() {
         return Text(
             'Error: ${snapshot.error}'); // Show an error message if the Future completed with an error
       } else if (snapshot.hasData && snapshot.data == true) {
+        if (bind.mainGetBuildinOption(
+                key: kOptionRemovePresetPasswordWarning) !=
+            'N') {
+          return SizedBox.shrink();
+        }
         return Container(
           color: Colors.yellow,
           child: Column(
@@ -3405,6 +3431,12 @@ get defaultOptionNo => isCustomClient ? 'N' : '';
 get defaultOptionWhitelist => isCustomClient ? ',' : '';
 get defaultOptionAccessMode => isCustomClient ? 'custom' : '';
 get defaultOptionApproveMode => isCustomClient ? 'password-click' : '';
+
+bool whitelistNotEmpty() {
+  // https://rustdesk.com/docs/en/self-host/client-configuration/advanced-settings/#whitelist
+  final v = bind.mainGetOptionSync(key: kOptionWhitelist);
+  return v != '' && v != ',';
+}
 
 // `setMovable()` is only supported on macOS.
 //

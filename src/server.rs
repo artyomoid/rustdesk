@@ -360,7 +360,12 @@ impl Server {
         self.services
             .keys()
             .filter(|k| {
-                Self::is_video_service_name(k) && self.services.get(*k).unwrap().is_subed(conn_id)
+                Self::is_video_service_name(k)
+                    && self
+                        .services
+                        .get(*k)
+                        .map(|s| s.is_subed(conn_id))
+                        .unwrap_or(false)
             })
             .count()
     }
@@ -484,7 +489,7 @@ pub async fn start_server(is_server: bool) {
         #[cfg(target_os = "windows")]
         crate::platform::try_kill_broker();
         #[cfg(feature = "hwcodec")]
-        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         scrap::hwcodec::start_check_process();
         crate::RendezvousMediator::start_all().await;
     } else {
