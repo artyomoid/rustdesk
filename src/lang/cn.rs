@@ -632,5 +632,14 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("About RustDesk", "关于 RustDesk"),
         ("Send clipboard keystrokes", "发送剪贴板按键"),
         ("network_error_tip", "请检查网络连接，然后点击再试"),
+        ("Unlock with PIN", "使用 PIN 码解锁设置"),
+        ("Requires at least {} characters", "不少于{}个字符"),
+        ("Wrong PIN", "PIN 码错误"),
+        ("Set PIN", "设置 PIN 码"),
+        ("Enable trusted devices", "启用信任设备"),
+        ("Manage trusted devices", "管理信任设备"),
+        ("Platform", "平台"),
+        ("Days remaining", "剩余天数"),
+        ("enable-trusted-devices-tip", "允许受信任的设备跳过 2FA 验证"),
     ].iter().cloned().collect();
 }

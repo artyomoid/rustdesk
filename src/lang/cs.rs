@@ -160,7 +160,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Create desktop icon", "Vytvořit ikonu na ploše"),
         ("agreement_tip", "Spuštěním instalace přijímáte licenční ujednání."),
         ("Accept and Install", "Přijmout a nainstalovat"),
-        ("End-user license agreement", "Licencenční ujednání s koncovým uživatelem"),
+        ("End-user license agreement", "Licenční ujednání s koncovým uživatelem"),
         ("Generating ...", "Vytváření ..."),
         ("Your installation is lower version.", "Máte nainstalovanou starší verzi"),
         ("not_close_tcp_tip", "Po dobu, po kterou tunel potřebujete, nezavírejte toto okno"),
@@ -632,5 +632,14 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("About RustDesk", "O RustDesk"),
         ("Send clipboard keystrokes", "Odesílat stisky kláves schránky"),
         ("network_error_tip", "Zkontrolujte prosím připojení k síti a klikněte na tlačítko Opakovat."),
+        ("Unlock with PIN", ""),
+        ("Requires at least {} characters", ""),
+        ("Wrong PIN", ""),
+        ("Set PIN", ""),
+        ("Enable trusted devices", ""),
+        ("Manage trusted devices", ""),
+        ("Platform", ""),
+        ("Days remaining", ""),
+        ("enable-trusted-devices-tip", ""),
     ].iter().cloned().collect();
 }

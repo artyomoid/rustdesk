@@ -1359,7 +1359,7 @@ fn read_custom_client_advanced_settings(
     } else {
         config::DEFAULT_SETTINGS.write().unwrap()
     };
-    let mut buildin_settings = config::BUILDIN_SETTINGS.write().unwrap();
+    let mut buildin_settings = config::BUILTIN_SETTINGS.write().unwrap();
 
     if let Some(settings) = settings.as_object() {
         for (k, v) in settings {
@@ -1492,6 +1492,15 @@ pub fn is_empty_uni_link(arg: &str) -> bool {
         return false;
     }
     arg[prefix.len()..].chars().all(|c| c == '/')
+}
+
+pub fn get_hwid() -> Bytes {
+    use sha2::{Digest, Sha256};
+
+    let uuid = hbb_common::get_uuid();
+    let mut hasher = Sha256::new();
+    hasher.update(&uuid);
+    Bytes::from(hasher.finalize().to_vec())
 }
 
 #[cfg(test)]

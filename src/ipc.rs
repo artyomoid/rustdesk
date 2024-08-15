@@ -25,7 +25,9 @@ use hbb_common::{
     config::{self, Config, Config2},
     futures::StreamExt as _,
     futures_util::sink::SinkExt,
-    log, password_security as password, timeout,
+    log, password_security as password,
+    sodiumoxide::base64,
+    timeout,
     tokio::{
         self,
         io::{AsyncRead, AsyncWrite},
@@ -260,6 +262,8 @@ pub enum Data {
     // Although the key is not neccessary, it is used to avoid hardcoding the key.
     WaylandScreencastRestoreToken((String, String)),
     HwCodecConfig(Option<String>),
+    RemoveTrustedDevices(Vec<Bytes>),
+    ClearTrustedDevices,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -484,6 +488,10 @@ async fn handle(data: Data, stream: &mut Connection) {
                     };
                 } else if name == "voice-call-input" {
                     value = crate::audio_service::get_voice_call_input_device();
+                } else if name == "unlock-pin" {
+                    value = Some(Config::get_unlock_pin());
+                } else if name == "trusted-devices" {
+                    value = Some(Config::get_trusted_devices_json());
                 } else {
                     value = None;
                 }
@@ -501,6 +509,8 @@ async fn handle(data: Data, stream: &mut Connection) {
                     Config::set_salt(&value);
                 } else if name == "voice-call-input" {
                     crate::audio_service::set_voice_call_input_device(Some(value), true);
+                } else if name == "unlock-pin" {
+                    Config::set_unlock_pin(&value);
                 } else {
                     return;
                 }
@@ -633,6 +643,12 @@ async fn handle(data: Data, stream: &mut Connection) {
                         .await
                 );
             }
+        }
+        Data::RemoveTrustedDevices(v) => {
+            Config::remove_trusted_devices(&v);
+        }
+        Data::ClearTrustedDevices => {
+            Config::clear_trusted_devices();
         }
         _ => {}
     }
@@ -863,6 +879,17 @@ pub async fn set_config_async(name: &str, value: String) -> ResultType<()> {
 }
 
 #[tokio::main(flavor = "current_thread")]
+pub async fn set_data(data: &Data) -> ResultType<()> {
+    set_data_async(data).await
+}
+
+pub async fn set_data_async(data: &Data) -> ResultType<()> {
+    let mut c = connect(1000, "").await?;
+    c.send(data).await?;
+    Ok(())
+}
+
+#[tokio::main(flavor = "current_thread")]
 pub async fn set_config(name: &str, value: String) -> ResultType<()> {
     set_config_async(name, value).await
 }
@@ -889,6 +916,61 @@ pub fn get_fingerprint() -> String {
 pub fn set_permanent_password(v: String) -> ResultType<()> {
     Config::set_permanent_password(&v);
     set_config("permanent-password", v)
+}
+
+#[cfg(feature = "flutter")]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub fn set_unlock_pin(v: String, translate: bool) -> ResultType<()> {
+    let v = v.trim().to_owned();
+    let min_len = 4;
+    if !v.is_empty() && v.len() < min_len {
+        let err = if translate {
+            crate::lang::translate(
+                "Requires at least {".to_string() + &format!("{min_len}") + "} characters",
+            )
+        } else {
+            // Sometimes, translated can't show normally in command line
+            format!("Requires at least {} characters", min_len)
+        };
+        bail!(err);
+    }
+    Config::set_unlock_pin(&v);
+    set_config("unlock-pin", v)
+}
+
+#[cfg(feature = "flutter")]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub fn get_unlock_pin() -> String {
+    if let Ok(Some(v)) = get_config("unlock-pin") {
+        Config::set_unlock_pin(&v);
+        v
+    } else {
+        Config::get_unlock_pin()
+    }
+}
+
+#[cfg(feature = "flutter")]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub fn get_trusted_devices() -> String {
+    if let Ok(Some(v)) = get_config("trusted-devices") {
+        v
+    } else {
+        Config::get_trusted_devices_json()
+    }
+}
+
+#[cfg(feature = "flutter")]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub fn remove_trusted_devices(hwids: Vec<Bytes>) {
+    Config::remove_trusted_devices(&hwids);
+    allow_err!(set_data(&Data::RemoveTrustedDevices(hwids)));
+}
+
+#[cfg(feature = "flutter")]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub fn clear_trusted_devices() {
+    Config::clear_trusted_devices();
+    allow_err!(set_data(&Data::ClearTrustedDevices));
 }
 
 pub fn get_id() -> String {
