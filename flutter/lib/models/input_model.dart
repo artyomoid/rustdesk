@@ -508,7 +508,7 @@ class InputModel {
     }
 
     // * Currently mobile does not enable map mode
-    if ((isDesktop || isWebDesktop) && keyboardMode == 'map') {
+    if ((isDesktop || isWebDesktop) && keyboardMode == kKeyMapMode) {
       mapKeyboardModeRaw(e);
     } else {
       legacyKeyboardModeRaw(e);
@@ -537,7 +537,7 @@ class InputModel {
     }
 
     // * Currently mobile does not enable map mode
-    if ((isDesktop || isWebDesktop)) {
+    if ((isDesktop || isWebDesktop) && keyboardMode == kKeyMapMode) {
       // FIXME: e.character is wrong for dead keys, eg: ^ in de
       newKeyboardMode(
           e.character ?? '',
@@ -783,6 +783,9 @@ class InputModel {
     _flingTimer?.cancel();
     if (!isInputSourceFlutter) {
       bind.sessionEnterOrLeave(sessionId: sessionId, enter: enter);
+    }
+    if (!isWeb && enter) {
+      bind.setCurSessionId(sessionId: sessionId);
     }
   }
 
