@@ -32,10 +32,6 @@ import com.hjq.permissions.XXPermissions
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
-import io.flutter.embedding.engine.plugins.FlutterPlugin
-import io.flutter.plugin.common.MethodCall
-import io.flutter.plugin.common.MethodChannel.MethodCallHandler
-import io.flutter.plugin.common.MethodChannel.Result
 import kotlin.concurrent.thread
 
 
@@ -66,7 +62,6 @@ class MainActivity : FlutterActivity() {
             channelTag
         )
         initFlutterChannel(flutterMethodChannel!!)
-        flutterEngine.plugins.add(ContextPlugin())
         thread { setCodecInfo() }
     }
 
@@ -108,7 +103,6 @@ class MainActivity : FlutterActivity() {
         mainService?.let {
             unbindService(serviceConnection)
         }
-        rdClipboardManager?.rustEnableServiceClipboard(false)
         super.onDestroy()
     }
 
@@ -225,6 +219,10 @@ class MainActivity : FlutterActivity() {
                     }
                     result.success(true)
 
+                }
+                "try_sync_clipboard" -> {
+                    rdClipboardManager?.syncClipboard(true)
+                    result.success(true)
                 }
                 GET_START_ON_BOOT_OPT -> {
                     val prefs = getSharedPreferences(KEY_SHARED_PREFERENCES, MODE_PRIVATE)
@@ -406,27 +404,5 @@ class MainActivity : FlutterActivity() {
     override fun onStart() {
         super.onStart()
         stopService(Intent(this, FloatingWindowService::class.java))
-    }
-
-    // For client side
-    // When swithing from other app to this app, try to sync clipboard.
-    override fun onWindowFocusChanged(hasFocus: Boolean) {
-        super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) {
-            rdClipboardManager?.syncClipboard(true)
-        }
-    }
-}
-
-// https://cjycode.com/flutter_rust_bridge/guides/how-to/ndk-init
-class ContextPlugin : FlutterPlugin, MethodCallHandler {
-    override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
-        FFI.initContext(flutterPluginBinding.applicationContext)
-    }
-    override fun onMethodCall(call: MethodCall, result: Result) {
-        result.notImplemented()
-    }
-
-    override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
     }
 }
